@@ -8,3 +8,8 @@ Some existing workloads I've been working on:
 - [petgraph](https://github.com/alpaylan/petgraph-etna)
 - [arroy](https://github.com/alpaylan/arroy-etna)
 - [roaring-rs](https://github.com/alpaylan/roaring-rs-etna)
+
+## Candidates
+
+- https://github.com/fjall-rs/fjall
+- 

@@ -23,7 +23,7 @@ export function registerCheckpointTools(pi: ExtensionAPI) {
       project_dir: Type.String({ description: "Path to project directory" }),
       stage: Type.String({
         description:
-          "Stage name (candidates, ranked, fixes, classified, tests, mutations, report, docs, validation)",
+          "Stage name (candidates, expansion, ranked, fixes, classified, tests, mutations, report, docs, tasks, commit, validation)",
       }),
       data: Type.Any({ description: "JSON data to write as the checkpoint" }),
     }),

@@ -11,16 +11,24 @@ Run strict consistency checks across all checkpoint files and the generated docu
 
 ## Execution Steps
 
-1. Use `etna_pipeline_gate_check` with `gate: "source_commit"` to verify each mutation's source commit matches the extracted buggy/fixed snippet.
-2. Use `etna_pipeline_gate_check` with `gate: "cross_checkpoint"` for the automated invariant checks.
-3. Additionally verify:
-   - BUGS.md exists and contains entries for every final mutation
+1. Use `etna_pipeline_gate_check` with `gate: "source_commit"` to verify each mutation's source commit matches the extracted fix sites. Additive-only fixes are valid when fixed snippets are present in added lines (no matching removed snippet required for that site).
+2. Use `etna_pipeline_gate_check` with `gate: "trigger_cases"` to verify each final mutation has a deterministic property trigger-case test mapping.
+3. Use `etna_pipeline_gate_check` with `gate: "frontportability_stop"` to verify below-target workloads have a justified STOP decision after expansion.
+4. Use `etna_pipeline_gate_check` with `gate: "cross_checkpoint"` for the automated invariant checks.
+5. Additionally verify:
+   - BUGS.md exists and contains entries for every final mutation (mutation catalog)
+   - tasks.json exists and contains mutation/property/witness triplets for final mutations (first-class stage output)
+   - commit.json exists and records one-per-mutation commit metadata (branch, commit, base_commit)
+   - commit stage is not a placeholder (no "not materialized yet" / pending-only commit output)
+   - TASKS.md exists and documents those tasks for humans
    - `marauder.toml` exists in the project directory
    - Mutation source files still contain valid marauders comment syntax
    - `etna_marauders_list` returns all expected mutations
    - File paths in BUGS.md match the full paths in mutations.json (e.g., `roaring/src/bitmap/store/bitmap_store.rs:575`, not just `bitmap_store.rs:575`)
-   - Mutation count is checked against the 20-50 target range
-4. **CRITICAL: Write `validation.json` checkpoint** using `etna_checkpoint_write` with stage "validation". This checkpoint is REQUIRED — the pipeline is not complete without it. The validation stage must always produce a checkpoint, even if validation fails.
+   - Mutation count policy: if below minimum target, `expansion.frontportability_stop` must justify that further mining is unlikely to yield frontportable bugs; otherwise continue expansion
+   - tests.json has `base.passed == true` and no variant placeholders such as `blocked_by_base`/`not_run`
+   - mutations.json removal reasons are terminal outcomes, not temporary blockers (e.g., not "not injected yet")
+6. **CRITICAL: Write `validation.json` checkpoint** using `etna_checkpoint_write` with stage "validation". This checkpoint is REQUIRED — the pipeline is not complete without it. The validation stage must always produce a checkpoint, even if validation fails.
 
 ## Invariants Checked
 
@@ -34,9 +42,16 @@ These are the invariants from the pipeline specification:
 6. `report.summary.mutations_undetected == 0`
 7. Every final mutation has at least one failing regression test in `tests.json`
 8. Every final mutation has a canonical failing property test in `docs.json`
-9. Every final mutation variant appears in BUGS.md with matching property test
-10. All checkpoints share the same `run_id`
-11. Every mutation source commit matches the extracted buggy/fixed snippet in `fixes.json` (via `source_commit` gate)
+9. Every final mutation variant appears in BUGS.md
+10. tasks.json and TASKS.md contain mutation/property/witness triplets and trigger-case references for final mutations
+11. commit.json maps each final mutation to a commit and all entries share a single base_commit (parallel branches)
+12. All checkpoints share the same `run_id`
+13. Every mutation source commit matches extracted fix evidence in `fixes.json` (fixed snippet in added lines; removed-snippet match required unless the site is additive-only) via `source_commit` gate
+14. Every final mutation has a deterministic property trigger-case test mapping (via `trigger_cases` gate)
+15. Below-target workloads have expansion STOP justification via `frontportability_stop` gate
+16. tests.json indicates a real executed test run (`base.passed == true`, no `blocked_by_base`/`not_run` placeholders)
+17. mutations.json removed reasons are terminal outcomes, not transitional blockers (no "not injected yet" placeholders)
+18. commit.json is not a placeholder-only artifact (no "not materialized yet" note)
 
 ## Output Schema
 

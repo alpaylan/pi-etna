@@ -24,20 +24,22 @@ For each expressible mutation, identify existing property-based tests (PBTs) tha
 
 4. Use `etna_cargo_test_base` to run all tests and confirm the base (fixed) version passes.
 5. Record base test results.
+6. If base tests fail due environment/toolchain/workspace setup (not due a mutation), STOP and treat this stage as blocked. Do **not** proceed to mutations/commit; fix the execution context first (toolchain override, workspace root, package filter, etc.).
 
 ### 5c: Run Variant Tests
 
-6. For each mutation variant, use `etna_cargo_test_variant` to check if existing tests detect the bug.
-7. If a variant has no failing tests, note it — the mutation stage may need to add targeted tests or remove the mutation.
-8. Record per-variant: `passed`, `exit_code`, `duration_seconds`, `failing_tests`, `failure_type`.
+7. For each mutation variant, use `etna_cargo_test_variant` to check if existing tests detect the bug.
+8. If a variant has no failing tests, note it — the mutation stage may need to add targeted tests or remove the mutation.
+9. Record per-variant: `passed`, `exit_code`, `duration_seconds`, `failing_tests`, `failure_type`.
 
 **Important**: Before running variant tests, mutations must be in functional syntax. Use `etna_marauders_convert` with `to: "functional"` on files containing mutations.
 
 ### 5d: Plan Additional Tests
 
-9. For mutations not detected by existing tests, plan:
+10. For mutations not detected by existing tests, plan:
    - **Regression test**: a concrete, non-parameterized test that reproduces the exact bug
    - **Property-based test**: a parameterized test capturing the violated property
+11. For property-based detectors, add at least one deterministic trigger-case test (recommended naming: `*_case_*`) so detection is reproducible and can be validated by the `trigger_cases` gate.
 
 ## Output Schema
 
@@ -67,6 +69,7 @@ For each expressible mutation, identify existing property-based tests (PBTs) tha
 ## Quality Criteria
 
 - Base tests must pass (exit_code 0) — stop if they don't
+- A completed tests stage must not contain placeholder statuses like `blocked_by_base`/`not_run` for variants
 - Every variant should be tested, even if expected to pass
 - `failing_tests` lists specific test names, not just counts
 - `failure_type` is a human-readable description of how the bug manifests

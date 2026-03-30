@@ -7,7 +7,7 @@ description: Build variant-to-property-test mapping and generate BUGS.md documen
 
 ## Objective
 
-Build a per-variant property-detector mapping and generate human-facing documentation (BUGS.md and BUGS.html).
+Build a per-variant property-detector mapping and generate mutation-focused documentation (BUGS.md and BUGS.html).
 
 ## Execution Steps
 
@@ -18,9 +18,10 @@ Build a per-variant property-detector mapping and generate human-facing document
    - Run `etna_cargo_test_variant` with a test filter for property tests (e.g., `property_`)
    - If multiple property tests fail, select the most specific one as canonical
    - If no property test fails, try broader filters or record as needing a new property test
-3. Record each mapping in `docs.json`.
+3. For each retained variant, identify a deterministic **trigger-case** property test (prefer names containing `case_`) that reproduces the bug with a hand-crafted input.
+4. Record each mapping in `docs.json`.
 
-### Generate BUGS.md
+### Generate BUGS.md (mutation catalog only)
 
 4. Create `BUGS.md` in the project directory with:
    - A header section with project name and mutation count
@@ -29,9 +30,13 @@ Build a per-variant property-detector mapping and generate human-facing document
    - Per-bug detail sections with description and failure profile
    - **Fix Commit source of truth**: use the verified commit from `fixes.json`/`mutations.json` (never infer from variant suffix alone)
 
+### Handoff to Tasks Stage
+
+5. Ensure docs checkpoint has enough mapping metadata (canonical property tests and trigger cases) for the `tasks` stage to build mutation/property/witness triplets.
+
 ### Generate BUGS.html
 
-5. Create an HTML version of BUGS.md with the same content.
+6. Create `BUGS.html` from BUGS.md.
 
 ## Output Schema (docs.json)
 
@@ -53,6 +58,7 @@ Build a per-variant property-detector mapping and generate human-facing document
       "name": "foo_wrong_operator",
       "variant": "foo_wrong_operator_abc1234_1",
       "canonical_failing_property_test": "property_foo_produces_correct_results",
+      "property_trigger_case_test": "property_foo_case_boundary",
       "property_detector_status": "detected",
       "property_filter": "property_",
       "source_commit": "<full_hash>"
@@ -107,7 +113,10 @@ File paths in BUGS.md must use the **same full paths** as `mutations.json`. For 
 ## Quality Criteria
 
 - Every retained mutation has `property_detector_status` of `"detected"` or `"property_mapped"`
+- Every retained mutation has a deterministic `property_trigger_case_test` (prefer test names containing `case_`)
 - Every `"property_mapped"` variant also has a `canonical_failing_regression_test`
 - `summary.property_detectors_missing` is 0
 - BUGS.md is consistent with docs.json (same variant names, same canonical tests, same file paths)
+- BUGS.md remains mutation-focused (no task triplet details required there)
+- docs.json contains canonical property and trigger-case mappings consumed by tasks stage
 - Canonical property tests are specific — prefer targeted property tests over broad ones

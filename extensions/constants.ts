@@ -1,5 +1,6 @@
 export const STAGES = [
   "candidates",
+  "expansion",
   "ranked",
   "fixes",
   "classified",
@@ -7,6 +8,8 @@ export const STAGES = [
   "mutations",
   "report",
   "docs",
+  "tasks",
+  "commit",
   "validation",
 ] as const;
 
@@ -16,6 +19,8 @@ export const STAGE_GUIDANCE: Record<Stage, string> = {
   candidates:
     "Identify likely bug-fix commits and issues from project history. " +
     "Return JSON with scan metadata and candidate list.",
+  expansion:
+    "Expand candidate mining depth (default target: 500 commits scanned total) when initial scan under-produces reliable final mutations.",
   ranked:
     "Rank candidates by locality, semantic clarity, testability, and diversity. " +
     "Return ordered list with rationale.",
@@ -31,7 +36,11 @@ export const STAGE_GUIDANCE: Record<Stage, string> = {
   report:
     "Build a consistent report summary and final mutation list derived from checkpoints.",
   docs:
-    "Build canonical variant-to-failing-property-test mapping for human-facing docs.",
+    "Build canonical variant-to-failing-property-test mapping and generate BUGS.md (mutations) + TASKS.md (mutation/property/witness triplets).",
+  tasks:
+    "Build first-class tasks checkpoint from mutation/property/witness triplets with tri-state property semantics (passed|failed|discarded).",
+  commit:
+    "Materialize one-per-mutation commit artifacts (parallel branches from a common base) and record commit metadata.",
   validation:
     "Validate cross-checkpoint invariants and produce pass/fail mismatch report.",
 };

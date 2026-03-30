@@ -19,8 +19,9 @@ For each classified and tested candidate, inject a marauders mutation in comment
 
 1. Read the classified and tests checkpoints.
 2. For each expressible mutation:
-   a. Use Pi's `edit` tool to inject marauders comment-syntax mutations into the source file.
-   b. Follow the marauders comment syntax format:
+   a. Use Pi's `edit` tool to inject marauders comment-syntax mutations into source files.
+   b. If a logical bug spans multiple files/hunks, inject all sites with the **same variant name** so one variant activation recreates the full bug.
+   c. Follow the marauders comment syntax format:
       ```rust
       /*| <mutation_name> [<tags>] */
       <fixed_code (base)>
@@ -39,15 +40,17 @@ For each classified and tested candidate, inject a marauders mutation in comment
 6. For each variant, run `etna_cargo_test_variant` — the relevant tests must fail.
 7. Mutations that cause compile errors: **discard** (only runtime-observable bugs are committed).
 8. Mutations not detected by any test: either add targeted tests and re-run, or remove with an explicit reason.
+9. Transitional placeholder removals (e.g., "not injected yet", "blocked by base") are **not allowed** in a completed mutations stage. If testing is blocked, fail/stop the pipeline and fix tests stage conditions first.
 
 ### Finalize
 
-9. Convert back to comment syntax: `etna_marauders_convert` with `to: "comment"`.
-10. Run `etna_marauders_list` once more to confirm final state.
+10. Convert back to comment syntax: `etna_marauders_convert` with `to: "comment"`.
+11. Run `etna_marauders_list` once more to confirm final state.
 
 ## Mutation Naming
 
 - **Variant**: `<descriptive_name>_<7-char-commit-hash>_<sequence>`
+- Use one shared variant across all injection sites that represent the same logical bug (including multi-file cases)
 - **Tags**: descriptive, comma-separated (e.g., `csr,add-node,row-offset`)
 
 ## Retention Rules
@@ -55,6 +58,7 @@ For each classified and tested candidate, inject a marauders mutation in comment
 - **Retain**: variant compiles, base tests pass, at least one test fails on variant
 - **Remove**: variant doesn't compile, or no test detects it (after attempting test additions)
 - **Every removal must have an explicit reason**
+- Removal reasons must be terminal outcomes (`compile error`, `undetected after targeted tests`, `inexpressible`), not temporary execution blockers
 
 ## Output Schema
 
@@ -74,6 +78,10 @@ For each classified and tested candidate, inject a marauders mutation in comment
       "tags": ["algo", "operator", "arithmetic"],
       "bug_type": "wrong-arithmetic-operator",
       "source_commit": "<full_commit_hash>",
+      "sites": [
+        { "file": "src/algo/foo.rs", "line": 42 },
+        { "file": "src/algo/helpers.rs", "line": 10 }
+      ],
       "test_mode": "debug",
       "passed": false,
       "detected": true,
@@ -100,3 +108,4 @@ The pipeline targets **20-50 mutations** per project. After finalizing the retai
 - `total_mutations` matches the array length
 - `marauder.toml` exists in the project directory
 - `etna_marauders_list` confirms all injected mutations are parseable
+- Multi-file/multi-hunk logical bugs are represented by a shared variant across all relevant sites

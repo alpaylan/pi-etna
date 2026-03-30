@@ -14,6 +14,8 @@ import {
   gatePropertyDetector,
   gateCrossCheckpoint,
   gateSourceCommitConsistency,
+  gateTriggerCases,
+  gateFrontportabilityStop,
 } from "../orchestrator";
 
 export function registerPipelineTools(pi: ExtensionAPI) {
@@ -131,18 +133,18 @@ export function registerPipelineTools(pi: ExtensionAPI) {
     name: "etna_pipeline_gate_check",
     label: "Pipeline Gate Check",
     description:
-      "Run a consistency gate check. 'detection' verifies all mutations are detected. 'property_detector' verifies all have property tests. 'source_commit' verifies mutation source commits match extracted buggy/fixed snippets. 'cross_checkpoint' validates all invariants across checkpoint files.",
+      "Run a consistency gate check. 'detection' verifies all mutations are detected. 'property_detector' verifies all have property tests. 'trigger_cases' verifies deterministic property trigger-case tests are mapped. 'frontportability_stop' verifies below-target workloads have a justified frontportability STOP decision. 'source_commit' verifies mutation source commits match extracted fix snippets (additive-only sites are allowed). 'cross_checkpoint' validates all invariants across checkpoint files.",
     parameters: Type.Object({
       project_dir: Type.String({ description: "Path to project directory" }),
       gate: StringEnum(
-        ["detection", "property_detector", "source_commit", "cross_checkpoint"] as const
+        ["detection", "property_detector", "trigger_cases", "frontportability_stop", "source_commit", "cross_checkpoint"] as const
       ),
     }),
 
     async execute(_toolCallId, params) {
       const { project_dir, gate } = params as {
         project_dir: string;
-        gate: "detection" | "property_detector" | "source_commit" | "cross_checkpoint";
+        gate: "detection" | "property_detector" | "trigger_cases" | "frontportability_stop" | "source_commit" | "cross_checkpoint";
       };
 
       let result;
@@ -152,6 +154,12 @@ export function registerPipelineTools(pi: ExtensionAPI) {
           break;
         case "property_detector":
           result = gatePropertyDetector(project_dir);
+          break;
+        case "trigger_cases":
+          result = gateTriggerCases(project_dir);
+          break;
+        case "frontportability_stop":
+          result = gateFrontportabilityStop(project_dir);
           break;
         case "source_commit":
           result = gateSourceCommitConsistency(project_dir);
