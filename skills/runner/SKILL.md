@@ -90,6 +90,18 @@ fn check_<name>() -> Result<(), String> {
 // only when the framework needs args adapted (e.g. bounded u8 for quickcheck).
 ```
 
+### Property name mapping: PascalCase (manifest) vs `property_<snake>` (source)
+
+`etna.toml` stores each property in PascalCase (e.g. `property = "BinhexAlphabetMatchesSpec"`). The Rust function that implements it is `property_<snake_case>` (e.g. `property_binhex_alphabet_matches_spec`). When the CLI dispatches `cargo run --release --bin etna -- <tool> <property>`, the `<property>` argument arrives in PascalCase; the runner's `match property { ... }` arms must match that PascalCase literal and call the snake-cased Rust function.
+
+Concrete example:
+
+- Manifest: `property = "BinhexAlphabetMatchesSpec"`.
+- Source: `pub fn property_binhex_alphabet_matches_spec(...) -> PropertyResult`.
+- Runner match arm: `"BinhexAlphabetMatchesSpec" => check_binhex_alphabet_matches_spec(),`.
+
+etna-cli uses the same convention via `pascal_to_snake` (`etna2/src/commands/workload/check.rs:307`). Keeping the runner aligned with the helper means `etna workload check` and the runner's dispatch agree on property identity.
+
 ### Tool runners
 
 All runners return `Outcome`. Every framework **must** actually drive its own crate — never fake hegel (or any other) by delegating to `run_etna`. A silent delegation produces meaningless numbers (always `inputs=1`, always detects) and misrepresents the whole point of cross-framework comparison. The validate stage greps adapter bodies for the framework crate name (see validate skill).
@@ -102,7 +114,7 @@ fn run_etna_property(property: &str) -> Outcome {
     if property == "All" { return run_all(run_etna_property); }
     let t0 = Instant::now();
     let status = match property {
-        "<Prop1>" => check_<prop1>(),
+        "<Prop1>" => check_<prop1>(),   // "<Prop1>" is a PascalCase literal from etna.toml, not a Rust identifier
         "<Prop2>" => check_<prop2>(),
         _ => return (Err(format!("Unknown property for etna: {property}")), Metrics::default()),
     };
@@ -110,9 +122,15 @@ fn run_etna_property(property: &str) -> Outcome {
 }
 
 // Proptest: closures capture freely, so `Arc<AtomicU64>` in-scope works.
+// Wrap the library call in `catch_unwind` — if the library-under-test panics
+// (common under mutations), we want `TestError::Fail(reason, _)` to carry the
+// formatted counterexample, not the raw panic message. Extract that reason
+// explicitly instead of `.to_string()`, which drips the "proptest failed..."
+// boilerplate into the JSON `error` field.
 fn run_proptest_property(property: &str) -> Outcome {
     use proptest::prelude::*;
-    use proptest::test_runner::{Config, TestCaseError, TestRunner};
+    use proptest::test_runner::{Config, TestCaseError, TestError, TestRunner};
+    use std::panic::AssertUnwindSafe;
     use std::sync::Arc;
     if property == "All" { return run_all(run_proptest_property); }
     let counter = Arc::new(AtomicU64::new(0));
@@ -123,8 +141,16 @@ fn run_proptest_property(property: &str) -> Outcome {
             let c = counter.clone();
             runner.run(&<strategy>, move |args| {
                 c.fetch_add(1, Ordering::Relaxed);
-                pr_into_result(property_<prop1>(args)).map_err(TestCaseError::fail)
-            }).map_err(|e| e.to_string())
+                let res = std::panic::catch_unwind(AssertUnwindSafe(|| property_<prop1>(args.clone())));
+                match res {
+                    Ok(PropertyResult::Pass) | Ok(PropertyResult::Discard) => Ok(()),
+                    Ok(PropertyResult::Fail(_)) | Err(_) =>
+                        Err(TestCaseError::fail(format!("({:?})", args))),
+                }
+            }).map_err(|e| match e {
+                TestError::Fail(reason, _) => reason.to_string(),
+                other => other.to_string(),
+            })
         }
         _ => return (Err(format!("Unknown property for proptest: {property}")), Metrics::default()),
     };
@@ -146,18 +172,27 @@ fn qc_<prop1>(args: ArgsTy) -> quickcheck::TestResult {
     }
 }
 
+// The quickcheck fork has an internal 60-second `max_time` default that
+// trips `ResultStatus::TimedOut` regardless of the outer etna cap or
+// `.tests(...)` count. Override with a very large `.max_time(...)` so the
+// only binding constraint is etna's per-run timeout.
 fn run_quickcheck_property(property: &str) -> Outcome {
     use quickcheck::{QuickCheck, ResultStatus};
+    use std::time::Duration;
     if property == "All" { return run_all(run_quickcheck_property); }
     QC_COUNTER.store(0, Ordering::Relaxed);
     let t0 = Instant::now();
     let result = match property {
-        "<Prop1>" => QuickCheck::new().tests(200).max_tests(1000).quicktest(qc_<prop1> as fn(ArgsTy) -> quickcheck::TestResult),
+        "<Prop1>" => QuickCheck::new()
+            .tests(200)
+            .max_tests(1000)
+            .max_time(Duration::from_secs(86_400))
+            .quicktest(qc_<prop1> as fn(ArgsTy) -> quickcheck::TestResult),
         _ => return (Err(format!("Unknown property for quickcheck: {property}")), Metrics::default()),
     };
     let status = match result.status {
         ResultStatus::Finished => Ok(()),
-        ResultStatus::Failed { arguments } => Err(format!("counterexample: ({})", arguments.join(" "))),
+        ResultStatus::Failed { arguments } => Err(format!("({})", arguments.join(" "))),
         ResultStatus::Aborted { err } => Err(format!("aborted: {err:?}")),
         ResultStatus::TimedOut => Err("timed out".into()),
         ResultStatus::GaveUp => Err(format!("gave up after {} tests", result.n_tests_passed)),
@@ -180,18 +215,24 @@ fn cc_<prop1>(args: ArgsTy) -> Option<bool> {
     }
 }
 
+// Crabcheck's internal loop is capped at 20,000 cases when using the bare
+// `cc::quickcheck(fn)` entry point. For overnight / benchmark runs, use
+// `cc::quickcheck_with_config(cc::Config { tests: N }, fn)` to lift the cap.
+// Crabcheck wraps the property call in `catch_unwind` itself, so a library
+// panic surfaces as `ResultStatus::Failed` — no extra wrapping needed here.
 fn run_crabcheck_property(property: &str) -> Outcome {
     use crabcheck::quickcheck as cc;
     if property == "All" { return run_all(run_crabcheck_property); }
     CC_COUNTER.store(0, Ordering::Relaxed);
     let t0 = Instant::now();
+    let cfg = cc::Config { tests: 200 }; // bump for benchmark runs
     let result = match property {
-        "<Prop1>" => cc::quickcheck(cc_<prop1> as fn(ArgsTy) -> Option<bool>),
+        "<Prop1>" => cc::quickcheck_with_config(cfg, cc_<prop1> as fn(ArgsTy) -> Option<bool>),
         _ => return (Err(format!("Unknown property for crabcheck: {property}")), Metrics::default()),
     };
     let status = match result.status {
         cc::ResultStatus::Finished => Ok(()),
-        cc::ResultStatus::Failed { arguments } => Err(format!("counterexample: ({})", arguments.join(" "))),
+        cc::ResultStatus::Failed { arguments } => Err(format!("({})", arguments.join(" "))),
         cc::ResultStatus::TimedOut => Err("timed out".into()),
         cc::ResultStatus::GaveUp => Err(format!("gave up: passed={}, discarded={}", result.passed, result.discarded)),
         cc::ResultStatus::Aborted { error } => Err(format!("aborted: {error}")),
@@ -206,10 +247,26 @@ fn run_crabcheck_property(property: &str) -> Outcome {
 // search time — keep in mind when comparing timings.
 // Do NOT attempt to pull in the local /Users/akeles/Programming/projects/PbtBenchmark/hegel-rust
 // crate (v0.4.5 does not compile as of 2026-04). Stay on crates.io 0.3.7.
+// Hegel gotchas:
+//   * `data_too_large` health check fires when a generator draws a big
+//     collection. Suppress via `.suppress_health_check(HealthCheck::all())`
+//     or the benchmark run reports "Health check failure" instead of a
+//     counterexample.
+//   * A fixed `.seed(...)` replays the same draw every trial. For 10-trial
+//     overnight runs, leave seeding to the library default so trials
+//     diversify.
+//   * The library-under-test may panic. Wrap the property call in
+//     `catch_unwind` and, on error, panic with the FORMATTED counterexample
+//     so the outer handler surfaces `(a b c)`, not `assertion failed: …`.
+//   * Hegel prefixes its own re-panic with `Property test failed: ` — strip
+//     that in the error handler.
 static HG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn hegel_settings() -> hegel::Settings {
-    hegel::Settings::new().test_cases(200).seed(Some(0xF100_A7))
+    use hegel::HealthCheck;
+    hegel::Settings::new()
+        .test_cases(200)
+        .suppress_health_check(HealthCheck::all())
 }
 
 fn run_hegel_property(property: &str) -> Outcome {
@@ -224,7 +281,12 @@ fn run_hegel_property(property: &str) -> Outcome {
             Hegel::new(|tc: TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let args: ArgsTy = /* draw inputs via tc.draw(hgen::…) */;
-                if let PropertyResult::Fail(m) = property_<prop1>(args) { panic!("{m}"); }
+                let cex = format!("({:?})", args);
+                let res = std::panic::catch_unwind(AssertUnwindSafe(|| property_<prop1>(args.clone())));
+                match res {
+                    Ok(PropertyResult::Pass) | Ok(PropertyResult::Discard) => {}
+                    Ok(PropertyResult::Fail(_)) | Err(_) => panic!("{cex}"),
+                }
             }).settings(settings.clone()).run();
         }
         _ => panic!("__unknown_property:{property}"),
@@ -240,7 +302,7 @@ fn run_hegel_property(property: &str) -> Outcome {
             if let Some(rest) = msg.strip_prefix("__unknown_property:") {
                 return (Err(format!("Unknown property for hegel: {rest}")), Metrics::default());
             }
-            Err(format!("hegel found counterexample: {msg}"))
+            Err(msg.strip_prefix("Property test failed: ").unwrap_or(&msg).to_string())
         }
     };
     (status, Metrics { inputs, elapsed_us })
@@ -327,9 +389,37 @@ fn main() {
 }
 ```
 
+## Framework gotchas
+
+Four defaults that silently corrupt overnight / benchmark runs unless each runner handles them up front. Bake these in at generation time — fixing them after the fact is a lot harder than getting them right when the runner is first written.
+
+| Framework  | Symptom when ignored                                   | Fix                                                                                                                   |
+|------------|--------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| quickcheck | `status:"failed"` with `error:"timed out"` after ~60s  | `.max_time(Duration::from_secs(86_400))` on the `QuickCheck::new()` chain.                                            |
+| hegel      | `Health check failure: data_too_large` in JSON `error` | `.suppress_health_check(HealthCheck::all())` on `Settings`; import `HealthCheck` from `hegel::`.                      |
+| proptest   | Counterexample contains a raw panic message            | Wrap the library call in `catch_unwind`; extract `TestError::Fail(reason, _)` and format `reason` as `(args…)`.       |
+| hegel      | Counterexample contains `Property test failed: ...`    | Wrap the library call in `catch_unwind` inside the `TestCase` closure; on error, `panic!` with the formatted cex. Strip `Property test failed: ` prefix in the outer handler. |
+| crabcheck  | Test count capped at 20,000                            | Use `cc::quickcheck_with_config(cc::Config { tests: N }, fn)` instead of `cc::quickcheck(fn)`.                        |
+
+Crabcheck catches library panics itself (as of the `catch_unwind` fix in `crabcheck/src/quickcheck.rs`) — no extra wrapping needed in the adapter; a panic becomes `ResultStatus::Failed { arguments }`.
+
+The counterexample format is always `(a b c)` across frameworks — do **not** prefix with framework names (`quickcheck counterexample: ...`, `hegel found counterexample: ...`). Downstream (`faultloc`) consumers parse this field as the input, not as framework-specific prose.
+
 ## Patch-based variants
 
 Marauders variants activate under `M_<variant>=active` and the runner does not need to know about them. Patch-based variants are different: the runner still does not know about them, because patch activation happens at commit materialization time — the `etna/<variant>` branch has the patch applied, and you test the mutation by building from that branch. The runner itself is identical across base and all variants.
+
+## Progress events
+
+Emit to `<project>/progress.jsonl` per the contract in `prompts/run.md`:
+
+| When                                                                   | Event line                                                                                     |
+|------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| Starting runner stage                                                  | `{"stage":"runner","event":"start"}`                                                           |
+| `src/bin/etna.rs` compiles for the first time                          | `{"stage":"runner","event":"compiled"}`                                                        |
+| An adapter (`proptest`/`quickcheck`/`crabcheck`/`hegel`/`etna`) passes | `{"stage":"runner","event":"framework_passing","framework":"<name>","property":"<name>\|All"}` |
+| An adapter fails that was expected to pass on base HEAD                | `{"stage":"runner","event":"framework_failing","framework":"<name>","property":"<name>","error":"<msg>"}` |
+| Runner stage complete: all frameworks pass on base HEAD                | `{"stage":"runner","event":"done"}`                                                            |
 
 ## Requirements
 

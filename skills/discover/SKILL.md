@@ -55,3 +55,16 @@ Every candidate must carry forward:
 ## Output
 
 The candidate list is an in-memory array, passed directly to `atomize`. No JSON file. This is intentional — the source tree and git history are the only durable records.
+
+## Progress events
+
+Append to `<project>/progress.jsonl` (see `prompts/run.md` for the contract):
+
+| When                                             | Event line                                                                                          |
+|--------------------------------------------------|------------------------------------------------------------------------------------------------------|
+| Before the `git log` walk starts                 | `{"stage":"discover","event":"start"}`                                                               |
+| Every ~100 commits inspected (optional heartbeat)| `{"stage":"discover","event":"progress","commits_scanned":N,"fix_commits_so_far":K}`                 |
+| A commit is classified as a fix candidate        | `{"stage":"discover","event":"candidate","hash":"<short>","subject":"<subject>","files":F,"hunks":H}` |
+| Walk complete, handing off to atomize            | `{"stage":"discover","event":"done","commits_scanned":N,"fix_commits":K}`                            |
+
+Always include the `ts` field on every line. On resume, the presence of a `discover.done` line means the walk is already complete — do not redo it; re-derive the candidate list from the in-file `candidate` events (or rewalk; both are cheap).

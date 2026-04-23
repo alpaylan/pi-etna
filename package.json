@@ -1,8 +1,8 @@
 {
-  "name": "pi-etna",
-  "version": "0.2.0",
+  "name": "etna-ify",
+  "version": "0.3.0",
   "description": "Mine a Rust project's git history and produce a cross-framework ETNA workload — property functions, witnesses, mutations, per-variant commits",
-  "keywords": ["pi-package"],
+  "keywords": ["etna"],
   "pi": {
     "skills": ["./skills"],
     "prompts": ["./prompts"]
